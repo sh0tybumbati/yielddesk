@@ -211,6 +211,34 @@
         </div>
 
         <div class="form-group">
+          <label for="waferCount">
+            Wafer Volume
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Total wafers ordered. Mask set cost is amortized across all good dies in this run. Higher volume = lower mask cost per die.</span>
+            </span>
+          </label>
+          <div class="input-unit">
+            <input type="number" id="waferCount" value="100" min="1" max="100000" step="10">
+            <span class="unit">wafers</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="maskCost">
+            Mask Set Cost
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Full mask set NRE cost. Defaults are industry estimates by node (e.g. ~$20M at 7nm, ~$45M at 3nm). Override with your fab quote.</span>
+            </span>
+          </label>
+          <div class="input-unit">
+            <input type="number" id="maskCost" placeholder="" min="0" step="100000">
+            <span class="unit">USD</span>
+          </div>
+        </div>
+
+        <div class="form-group">
           <label for="waferCost">
             Wafer Cost
             <span class="tooltip-wrap">
@@ -245,6 +273,7 @@
           <div class="card-title" id="resultsTitle">// Results</div>
 
           <div id="nodeNote" style="display:none;background:rgba(0,200,255,0.06);border:1px solid rgba(0,200,255,0.2);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:0.78rem;color:var(--text-muted);line-height:1.5;"></div>
+          <div id="reticleWarning" style="display:none;background:rgba(255,74,106,0.08);border:1px solid rgba(255,74,106,0.3);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:0.78rem;color:#ff7a90;line-height:1.5;"></div>
 
           <div class="result-grid">
             <div class="result-item">
@@ -260,8 +289,8 @@
               <div class="result-value" id="res-gdpw">—</div>
             </div>
             <div class="result-item">
-              <div class="result-label">Cost / Good Die</div>
-              <div class="result-value" id="res-cpgd">—</div>
+              <div class="result-label">Reticle Util.</div>
+              <div class="result-value" id="res-reticle">—</div>
             </div>
           </div>
 
@@ -272,6 +301,22 @@
             </div>
             <div class="yield-bar-track">
               <div class="yield-bar-fill" id="yieldBarFill" style="width:0%"></div>
+            </div>
+          </div>
+
+          <!-- Cost breakdown -->
+          <div style="margin-top:16px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;">
+            <div style="display:grid;grid-template-columns:1fr auto;padding:8px 14px;font-family:var(--font-mono);font-size:0.78rem;border-bottom:1px solid var(--border);">
+              <span style="color:var(--text-muted);">Wafer cost / good die</span>
+              <span id="res-wafer-cpd" style="color:var(--text);">—</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr auto;padding:8px 14px;font-family:var(--font-mono);font-size:0.78rem;border-bottom:1px solid var(--border);">
+              <span style="color:var(--text-muted);">Mask cost / good die <span id="res-mask-vol" style="opacity:0.6;"></span></span>
+              <span id="res-mask-cpd" style="color:var(--text);">—</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr auto;padding:10px 14px;font-family:var(--font-mono);font-size:0.9rem;background:rgba(0,200,255,0.05);">
+              <span style="color:var(--accent);font-weight:600;">Total cost / good die</span>
+              <span id="res-total-cpd" style="color:var(--accent);font-weight:700;">—</span>
             </div>
           </div>
 

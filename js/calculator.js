@@ -84,6 +84,42 @@ export const WAFER_COSTS = {
   '20A': 20000, '18A': 22000, '14A': 28000,
 };
 
+// ── Mask set costs ($USD) ─────────────────────────────────────
+// Full mask set cost (all layers) by process node.
+// Sources: Gartner, IBS, VLSI Research, industry disclosures.
+// Costs reflect HVM pricing; NRE/shuttle runs are higher.
+export const MASK_COSTS = {
+  '3μm':    75_000,       // g-line contact/proximity
+  '2μm':    100_000,
+  '1.5μm':  130_000,
+  '1μm':    170_000,
+  '800nm':  220_000,
+  '600nm':  300_000,
+  '350nm':  400_000,      // i-line stepper
+  '250nm':  600_000,
+  '180nm':  900_000,      // 248nm DUV starts
+  '130nm':  1_300_000,
+  '90nm':   1_800_000,    // 193nm dry
+  '65nm':   2_500_000,
+  '45nm':   3_500_000,    // 193nm immersion starts
+  '32nm':   5_000_000,
+  '22nm':   7_000_000,    // double patterning
+  '14nm':   10_000_000,   // multi-patterning intensive
+  '10nm':   15_000_000,
+  '7nm':    20_000_000,   // EUV starts
+  '5nm':    30_000_000,
+  '3nm':    45_000_000,
+  '2nm':    70_000_000,   // EUV + High-NA ramp
+  'Intel 4': 25_000_000,
+  'Intel 3': 30_000_000,
+  '20A':    50_000_000,
+  '18A':    60_000_000,
+  '14A':    80_000_000,   // High-NA EUV
+};
+
+// Standard ASML scanner reticle field (mm)
+export const RETICLE_FIELD = { width: 26, height: 33 };
+
 // ============================================================
 // Core calculations
 // ============================================================
@@ -116,44 +152,77 @@ export function yieldFor(model, d0, critAreaMm2, critLayers = 25) {
 }
 
 /**
+ * Reticle utilization and limit check.
+ * Returns { utilPct, exceedsWidth, exceedsHeight, exceedsField }
+ */
+export function reticleInfo(dieWidthMm, dieHeightMm) {
+  const utilPct       = (dieWidthMm * dieHeightMm) / (RETICLE_FIELD.width * RETICLE_FIELD.height) * 100;
+  const exceedsWidth  = dieWidthMm  > RETICLE_FIELD.width;
+  const exceedsHeight = dieHeightMm > RETICLE_FIELD.height;
+  return {
+    utilPct,
+    exceedsWidth,
+    exceedsHeight,
+    exceedsField: exceedsWidth || exceedsHeight,
+    nearLimit: utilPct > 70 && !exceedsWidth && !exceedsHeight,
+  };
+}
+
+/**
  * Full calculation result.
+ * @param {number} waferCount      - number of wafers ordered (for mask amortization)
+ * @param {number} maskCostOverride - override default mask set cost
  */
 export function calculate({
   waferDiamMm, dieWidthMm, dieHeightMm,
   processNode, maturity = 'hvm',
   yieldModel = 'murphy', critLayers = 25,
-  critAreaMm2 = null,   // null = use full die area
-  waferCostOverride, edgeLossMm = 3,
-  scrLineX = 0.1, scrLineY = 0.1,
+  critAreaMm2 = null,
+  waferCostOverride, maskCostOverride,
+  waferCount = 100,
+  edgeLossMm = 3, scrLineX = 0.1, scrLineY = 0.1,
 }) {
   const node = PROCESS_NODES[processNode];
   if (!node) throw new Error(`Unknown process node: ${processNode}`);
 
-  const dieAreaMm2       = dieWidthMm * dieHeightMm;
+  const dieAreaMm2        = dieWidthMm * dieHeightMm;
   const effectiveCritArea = critAreaMm2 ?? dieAreaMm2;
-  const maturityLevel    = MATURITY_LEVELS[maturity] ?? MATURITY_LEVELS.hvm;
-  const d0Effective      = node.d0 * maturityLevel.multiplier;
-  const waferCost        = waferCostOverride ?? WAFER_COSTS[processNode] ?? 2000;
+  const maturityLevel     = MATURITY_LEVELS[maturity] ?? MATURITY_LEVELS.hvm;
+  const d0Effective       = node.d0 * maturityLevel.multiplier;
+  const waferCost         = waferCostOverride ?? WAFER_COSTS[processNode] ?? 2000;
+  const maskCost          = maskCostOverride  ?? MASK_COSTS[processNode]  ?? 1_000_000;
 
   const dpw    = diesPerWafer(waferDiamMm, dieWidthMm, dieHeightMm, edgeLossMm, scrLineX, scrLineY);
   const yMain  = yieldFor(yieldModel, d0Effective, effectiveCritArea, critLayers);
-  const yMurphy = yieldFor('murphy',  d0Effective, effectiveCritArea);
+  const yMurphy = yieldFor('murphy', d0Effective, effectiveCritArea);
   const gdpw   = Math.floor(dpw * yMain);
-  const cpgd   = gdpw > 0 ? waferCost / gdpw : null;
+
+  const waferCostPerDie = gdpw > 0 ? waferCost / gdpw : null;
+  const totalGoodDies   = gdpw * waferCount;
+  const maskCostPerDie  = totalGoodDies > 0 ? maskCost / totalGoodDies : null;
+  const totalCostPerDie = (waferCostPerDie != null && maskCostPerDie != null)
+    ? waferCostPerDie + maskCostPerDie : null;
+
+  const reticle = reticleInfo(dieWidthMm, dieHeightMm);
 
   return {
     diesPerWafer:            dpw,
     yield:                   yMain,
-    yieldMurphy:             yMurphy,  // always available for reference
+    yieldMurphy:             yMurphy,
     goodDiesPerWafer:        gdpw,
-    costPerGoodDie:          cpgd,
+    waferCostPerDie,
+    maskCostPerDie,
+    totalCostPerDie,
+    maskCost,
     defectDensityBase:       node.d0,
     defectDensityEffective:  d0Effective,
     maturityMultiplier:      maturityLevel.multiplier,
     maturityLabel:           maturityLevel.label,
     waferCost,
+    waferCount,
     dieAreaMm2,
     critAreaMm2:             effectiveCritArea,
+    reticle,
     processNodeLabel:        node.label,
     nodeNote:                node.note ?? null,
     vendor:                  node.vendor,

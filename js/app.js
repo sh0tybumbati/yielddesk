@@ -1,6 +1,6 @@
 import {
   calculate, yieldCurve,
-  PROCESS_NODES, WAFER_DIAMETERS_MM, WAFER_COSTS, MATURITY_LEVELS, YIELD_MODELS,
+  PROCESS_NODES, WAFER_DIAMETERS_MM, WAFER_COSTS, MASK_COSTS, MATURITY_LEVELS, YIELD_MODELS,
 } from './calculator.js';
 
 // ── Populate selects ──────────────────────────────────────────
@@ -200,15 +200,20 @@ function updateResults() {
   const critAreaMm2 = allCritical ? null : (isNaN(critAreaRaw) ? null : critAreaRaw);
   const scrLineX    = parseFloat(document.getElementById('scrLineX').value) || 0;
   const scrLineY    = parseFloat(document.getElementById('scrLineY').value) || 0;
-  const waferCostRaw = document.getElementById('waferCost').value;
+  const waferCount      = parseInt(document.getElementById('waferCount').value) || 100;
+  const maskCostRaw     = document.getElementById('maskCost').value;
+  const maskCostOverride = maskCostRaw ? parseFloat(maskCostRaw) : undefined;
+  const waferCostRaw    = document.getElementById('waferCost').value;
   const waferCostOverride = waferCostRaw ? parseFloat(waferCostRaw) : undefined;
-  const edgeLoss    = parseFloat(document.getElementById('edgeLoss').value) || 3;
+  const edgeLoss        = parseFloat(document.getElementById('edgeLoss').value) || 3;
 
   document.getElementById('dieAreaDisplay').textContent = dieAreaMm2.toFixed(2) + ' mm²';
   document.getElementById('critLayersGroup').style.display = yieldModel === 'bose_einstein' ? 'block' : 'none';
 
   const defaultCost = WAFER_COSTS[processNode];
   document.getElementById('waferCost').placeholder = defaultCost ? `$${defaultCost} (default)` : '';
+  const defaultMask = MASK_COSTS[processNode];
+  document.getElementById('maskCost').placeholder  = defaultMask ? `$${(defaultMask/1e6).toFixed(0)}M (default)` : '';
 
   let result;
   try {
@@ -216,32 +221,61 @@ function updateResults() {
       waferDiamMm, dieWidthMm, dieHeightMm,
       processNode, maturity: selectedMaturity,
       yieldModel, critLayers, critAreaMm2,
-      waferCostOverride, edgeLossMm: edgeLoss,
-      scrLineX, scrLineY,
+      waferCostOverride, maskCostOverride, waferCount,
+      edgeLossMm: edgeLoss, scrLineX, scrLineY,
     });
   } catch(e) { console.error(e); return; }
 
-  lastParams = { waferDiamMm, dieWidthMm, dieHeightMm, processNode, yieldModel, critLayers, critAreaMm2, scrLineX, scrLineY, waferCostOverride, edgeLoss, maturity: selectedMaturity };
+  lastParams = { waferDiamMm, dieWidthMm, dieHeightMm, processNode, yieldModel, critLayers,
+    critAreaMm2, scrLineX, scrLineY, waferCostOverride, maskCostOverride, waferCount, edgeLoss,
+    maturity: selectedMaturity };
 
   const yPct = (result.yield * 100).toFixed(1) + '%';
-  const modelLabel = YIELD_MODELS[yieldModel]?.label ?? yieldModel;
 
+  // Core results
   document.getElementById('res-dpw').textContent   = fmt(result.diesPerWafer);
   document.getElementById('res-yield').textContent = yPct;
   document.getElementById('res-gdpw').textContent  = fmt(result.goodDiesPerWafer);
-  document.getElementById('res-cpgd').textContent  = fmtMoney(result.costPerGoodDie);
-  document.querySelector('.card-title[data-yield-label]')?.setAttribute('data-yield-label', modelLabel);
-  document.getElementById('res-yield').className = 'result-value ' + yieldClass(result.yield);
-  document.getElementById('res-gdpw').className  = 'result-value ' + yieldClass(result.yield);
+  document.getElementById('res-yield').className   = 'result-value ' + yieldClass(result.yield);
+  document.getElementById('res-gdpw').className    = 'result-value ' + yieldClass(result.yield);
 
+  // Reticle
+  const ric = result.reticle;
+  const reticleEl = document.getElementById('res-reticle');
+  reticleEl.textContent = ric.exceedsField ? 'EXCEEDS' : ric.utilPct.toFixed(1) + '%';
+  reticleEl.className   = 'result-value ' + (ric.exceedsField ? 'bad' : ric.nearLimit ? 'warn' : '');
+
+  const warnEl = document.getElementById('reticleWarning');
+  if (ric.exceedsField) {
+    const dims = [];
+    if (ric.exceedsWidth)  dims.push(`width (${dieWidthMm}mm > 26mm)`);
+    if (ric.exceedsHeight) dims.push(`height (${dieHeightMm}mm > 33mm)`);
+    warnEl.textContent = `⚠ Die exceeds reticle field on ${dims.join(' and ')}. Reticle stitching required — consult your foundry.`;
+    warnEl.style.display = 'block';
+  } else if (ric.nearLimit) {
+    warnEl.textContent = `⚠ Die is using ${ric.utilPct.toFixed(1)}% of the reticle field. Approaching the 26×33mm limit.`;
+    warnEl.style.display = 'block';
+  } else {
+    warnEl.style.display = 'none';
+  }
+
+  // Cost breakdown
+  document.getElementById('res-wafer-cpd').textContent = fmtMoney(result.waferCostPerDie);
+  document.getElementById('res-mask-cpd').textContent  = fmtMoney(result.maskCostPerDie);
+  document.getElementById('res-total-cpd').textContent = fmtMoney(result.totalCostPerDie);
+  document.getElementById('res-mask-vol').textContent  = `@ ${fmt(waferCount)} wafers`;
+
+  // Yield bar
   const bar = document.getElementById('yieldBarFill');
-  bar.style.width = (result.yield * 100) + '%';
+  bar.style.width      = (result.yield * 100) + '%';
   bar.style.background = result.yield >= 0.7 ? 'var(--green)' : result.yield >= 0.4 ? 'var(--yellow)' : 'var(--red)';
   document.getElementById('yieldBarLabel').textContent = yPct;
 
+  // D₀
   document.getElementById('res-d0-base').textContent = result.defectDensityBase.toFixed(3);
   document.getElementById('res-d0-eff').textContent  = result.defectDensityEffective.toFixed(3);
 
+  // Node note
   const noteEl = document.getElementById('nodeNote');
   if (result.nodeNote) { noteEl.textContent = result.nodeNote; noteEl.style.display = 'block'; }
   else { noteEl.style.display = 'none'; }
@@ -269,7 +303,8 @@ document.querySelectorAll('.maturity-btn').forEach(btn => {
 
 // ── Wire inputs ───────────────────────────────────────────────
 ['processNode', 'waferSize', 'dieWidth', 'dieHeight', 'yieldModel',
- 'critLayers', 'critArea', 'scrLineX', 'scrLineY', 'waferCost', 'edgeLoss'].forEach(id => {
+ 'critLayers', 'critArea', 'scrLineX', 'scrLineY',
+ 'waferCount', 'maskCost', 'waferCost', 'edgeLoss'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', updateResults);
 });
 
@@ -277,18 +312,20 @@ document.querySelectorAll('.maturity-btn').forEach(btn => {
 function updateShareUrl() {
   const p = lastParams;
   const params = new URLSearchParams({
-    node:     p.processNode,
-    mat:      p.maturity,
-    model:    p.yieldModel,
-    w:        p.dieWidthMm,
-    h:        p.dieHeightMm,
-    wafer:    p.waferDiamMm,
-    edge:     p.edgeLoss,
-    sx:       p.scrLineX,
-    sy:       p.scrLineY,
-    ...(p.critAreaMm2 != null && { crit: p.critAreaMm2 }),
-    ...(p.critLayers  !== 25  && { cl:   p.critLayers }),
-    ...(p.waferCostOverride   && { wc:   p.waferCostOverride }),
+    node:  p.processNode,
+    mat:   p.maturity,
+    model: p.yieldModel,
+    w:     p.dieWidthMm,
+    h:     p.dieHeightMm,
+    wafer: p.waferDiamMm,
+    edge:  p.edgeLoss,
+    sx:    p.scrLineX,
+    sy:    p.scrLineY,
+    vol:   p.waferCount,
+    ...(p.critAreaMm2      != null && { crit: p.critAreaMm2 }),
+    ...(p.critLayers       !== 25  && { cl:   p.critLayers }),
+    ...(p.waferCostOverride        && { wc:   p.waferCostOverride }),
+    ...(p.maskCostOverride         && { mc:   p.maskCostOverride }),
   });
   document.getElementById('shareUrl').value = `${location.origin}${location.pathname}?${params}`;
 }
@@ -316,6 +353,8 @@ function loadFromUrl() {
   setVal('yieldModel', p.get('model'));
   setVal('critLayers', p.get('cl'));
   setVal('waferCost',  p.get('wc'));
+  setVal('waferCount', p.get('vol'));
+  setVal('maskCost',   p.get('mc'));
   if (p.get('crit')) { setVal('critArea', p.get('crit')); document.getElementById('allCritical').checked = false; document.getElementById('critAreaInput').style.display = 'block'; }
 
   // Set wafer size
