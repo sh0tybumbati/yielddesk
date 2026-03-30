@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YieldDesk — Semiconductor Yield & Cost Calculator</title>
+  <meta name="description" content="Free semiconductor yield calculator using Murphy's Law model. Calculate dies per wafer, yield percentage, and cost per good die for any process node from 3μm to 2nm.">
+  <meta name="keywords" content="semiconductor yield calculator, dies per wafer, Murphy's Law yield, wafer cost calculator, chip yield, process node, die cost">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="YieldDesk — Semiconductor Yield & Cost Calculator">
+  <meta property="og:description" content="Calculate semiconductor yield, dies per wafer, and cost per good die. Free tool for chip engineers and students.">
+  <meta property="og:type" content="website">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Structured data for SEO -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "YieldDesk",
+    "description": "Semiconductor yield and wafer cost calculator for engineers",
+    "applicationCategory": "UtilitiesApplication",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
+  }
+  </script>
+</head>
+<body>
+
+<!-- Pro success banner -->
+<div id="proSuccessBanner" style="display:none;position:fixed;top:0;left:0;right:0;background:var(--green);color:#000;padding:12px;text-align:center;font-weight:600;z-index:999;align-items:center;justify-content:center;gap:8px;">
+  ✓ Pro unlocked — export and advanced features are now active.
+</div>
+
+<!-- Header -->
+<header>
+  <div class="container header-inner">
+    <div class="logo">Yield<span>Desk</span></div>
+    <nav class="nav-links">
+      <a href="#calculator">Calculator</a>
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="https://github.com/sh0tybumbati/yielddesk" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge">SEMICONDUCTOR ENGINEERING TOOL</div>
+    <h1>Yield. Cost. <em>Clarity.</em></h1>
+    <p>Calculate semiconductor die yield, dies per wafer, and cost per good die using the industry-standard Murphy's Law model. Free for engineers, students, and hardware startups.</p>
+    <div class="flex-gap">
+      <a href="#calculator" class="btn btn-primary btn-lg">Open Calculator</a>
+      <a href="#pricing" class="btn btn-secondary btn-lg">Get Pro — $9/mo</a>
+    </div>
+  </div>
+</section>
+
+<!-- Calculator -->
+<section class="calc-section" id="calculator">
+  <div class="container">
+    <div class="calc-grid">
+
+      <!-- Inputs -->
+      <div class="card">
+        <div class="card-title">// Parameters</div>
+
+        <div class="form-group">
+          <label for="processNode">
+            Process Node
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Sets defect density (D₀) based on published ITRS data for that node generation.</span>
+            </span>
+          </label>
+          <select id="processNode"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="waferSize">Wafer Diameter</label>
+          <select id="waferSize"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="dieArea">
+            Die Area
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Total die size in mm². Larger dies have exponentially lower yield.</span>
+            </span>
+          </label>
+          <div class="input-unit">
+            <input type="number" id="dieArea" value="100" min="0.1" max="10000" step="0.1">
+            <span class="unit">mm²</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="waferCost">
+            Wafer Cost
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Override the default wafer cost. Leave blank to use estimated market price for the selected node.</span>
+            </span>
+          </label>
+          <div class="input-unit">
+            <input type="number" id="waferCost" placeholder="$4500 (default)" min="0" step="100">
+            <span class="unit">USD</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="edgeLoss">
+            Edge Exclusion
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Unusable wafer edge margin in mm. Industry standard is 3mm. Advanced fabs push to 2mm.</span>
+            </span>
+          </label>
+          <div class="input-unit">
+            <input type="number" id="edgeLoss" value="3" min="0" max="20" step="0.5">
+            <span class="unit">mm</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Results -->
+      <div>
+        <div class="card" style="margin-bottom:20px;">
+          <div class="card-title">// Results — Murphy's Law Model</div>
+
+          <div class="result-grid">
+            <div class="result-item">
+              <div class="result-label">Dies / Wafer</div>
+              <div class="result-value" id="res-dpw">—</div>
+            </div>
+            <div class="result-item">
+              <div class="result-label">Yield</div>
+              <div class="result-value" id="res-yield">—</div>
+            </div>
+            <div class="result-item">
+              <div class="result-label">Good Dies / Wafer</div>
+              <div class="result-value" id="res-gdpw">—</div>
+            </div>
+            <div class="result-item">
+              <div class="result-label">Cost / Good Die</div>
+              <div class="result-value" id="res-cpgd">—</div>
+            </div>
+          </div>
+
+          <div class="yield-bar-wrap">
+            <div class="yield-bar-label">
+              <span>Yield</span>
+              <span id="yieldBarLabel">—</span>
+            </div>
+            <div class="yield-bar-track">
+              <div class="yield-bar-fill" id="yieldBarFill" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Wafer visualization -->
+        <div class="card" style="margin-bottom:20px;">
+          <div class="card-title">// Wafer Map</div>
+          <div class="wafer-wrap">
+            <canvas id="waferCanvas"></canvas>
+          </div>
+          <p style="text-align:center;font-size:0.75rem;color:var(--text-muted);margin-top:8px;font-family:var(--font-mono);">
+            <span style="color:var(--green)">■</span> Good die &nbsp;
+            <span style="color:var(--red)">■</span> Defective die
+          </p>
+        </div>
+
+        <!-- Export (Pro) -->
+        <div class="card">
+          <div class="card-title">// Export</div>
+          <button class="btn btn-secondary" id="exportBtn" style="width:100%">
+            Export Results as CSV
+            <span class="pro-tag">PRO</span>
+          </button>
+          <p style="margin-top:10px;font-size:0.8rem;color:var(--text-muted);">
+            Pro also unlocks Poisson model comparison, batch calculator, and API access.
+            <a href="#pricing" style="color:var(--accent);">Upgrade →</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="features-section" id="features">
+  <div class="container">
+    <div class="section-label">// What's included</div>
+    <h2 class="section-title">Built for how engineers actually work</h2>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">📐</div>
+        <h3>Murphy's Law Yield Model</h3>
+        <p>The industry-standard Seeds/Murphy model. More accurate than Poisson for modern process nodes with clustered defects.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">💰</div>
+        <h3>Cost Per Good Die</h3>
+        <p>Default wafer costs based on published market data for each node. Override with your actual fab quote.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🗺️</div>
+        <h3>Live Wafer Map</h3>
+        <p>Visual die layout showing good vs defective dies. Updates instantly as you change parameters.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>Model Comparison <span class="pro-tag">PRO</span></h3>
+        <p>Side-by-side Murphy vs Poisson yield comparison. Understand the accuracy gap at your die size.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📦</div>
+        <h3>Batch Calculator <span class="pro-tag">PRO</span></h3>
+        <p>Calculate total wafer order cost and expected good die count across multiple wafer batches.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔌</div>
+        <h3>REST API Access <span class="pro-tag">PRO</span></h3>
+        <p>Integrate YieldDesk calculations into your own tools and scripts. JSON response, key-based auth.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Pricing -->
+<section class="pricing-section" id="pricing">
+  <div class="container">
+    <div class="section-label text-center">// Pricing</div>
+    <h2 class="section-title text-center">Simple, fair pricing</h2>
+
+    <div class="pricing-grid">
+      <div class="pricing-card">
+        <div class="plan-name">Free</div>
+        <div class="plan-price"><sup>$</sup>0</div>
+        <div class="plan-desc">For quick calculations and learning</div>
+        <ul class="plan-features">
+          <li>Murphy's Law yield calculator</li>
+          <li>Dies per wafer (all wafer sizes)</li>
+          <li>Cost per good die</li>
+          <li>Live wafer map visualization</li>
+          <li>All 21 process nodes (3μm → 2nm)</li>
+          <li class="locked">Export to CSV</li>
+          <li class="locked">Model comparison</li>
+          <li class="locked">Batch calculator</li>
+          <li class="locked">API access</li>
+        </ul>
+        <a href="#calculator" class="btn btn-secondary" style="width:100%">Use Free</a>
+      </div>
+
+      <div class="pricing-card featured">
+        <div class="plan-name">Pro</div>
+        <div class="plan-price"><sup>$</sup>9<sub>/mo</sub></div>
+        <div class="plan-desc">For engineers and hardware teams</div>
+        <ul class="plan-features">
+          <li>Everything in Free</li>
+          <li>Export results to CSV</li>
+          <li>Murphy vs Poisson comparison</li>
+          <li>Batch wafer order calculator</li>
+          <li>REST API access (1,000 req/mo)</li>
+          <li>Custom D₀ override</li>
+          <li>Priority support</li>
+        </ul>
+        <a href="/checkout" class="btn btn-primary" style="width:100%" id="upgradeBtn">
+          Get Pro — $9/mo
+        </a>
+        <p style="text-align:center;font-size:0.75rem;color:var(--text-muted);margin-top:10px;">Cancel anytime. No contracts.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container footer-inner">
+    <div>
+      <strong>YieldDesk</strong> — Semiconductor yield calculator for engineers
+    </div>
+    <div style="display:flex;gap:20px;">
+      <a href="mailto:support@yielddesk.tools">Contact</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </div>
+  </div>
+</footer>
+
+<!-- Pro Upgrade Modal -->
+<div id="proModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:200;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+  <div class="card" style="max-width:400px;width:90%;text-align:center;">
+    <div style="font-size:2rem;margin-bottom:12px;">⚡</div>
+    <h3 style="margin-bottom:8px;">Pro Feature</h3>
+    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:20px;">
+      CSV export, model comparison, batch calculator, and API access are included in YieldDesk Pro.
+    </p>
+    <a href="/checkout" class="btn btn-primary" style="width:100%;margin-bottom:10px;">
+      Upgrade to Pro — $9/mo
+    </a>
+    <button id="closeProModal" class="btn btn-secondary" style="width:100%;background:transparent;">
+      Maybe later
+    </button>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
