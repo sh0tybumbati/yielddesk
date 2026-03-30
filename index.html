@@ -109,6 +109,35 @@
         </div>
 
         <div class="form-group">
+          <label>
+            Process Maturity
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Maturity scales D₀. A new node in pilot has 3× more defects than the same node in mature HVM production.</span>
+            </span>
+          </label>
+          <div id="maturityBtns" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">
+            <button class="maturity-btn" data-maturity="pilot">
+              <div style="font-weight:700;font-size:0.8rem;">Pilot</div>
+              <div style="font-size:0.65rem;opacity:0.7;">3× D₀</div>
+            </button>
+            <button class="maturity-btn" data-maturity="ramp">
+              <div style="font-weight:700;font-size:0.8rem;">Ramp</div>
+              <div style="font-size:0.65rem;opacity:0.7;">2× D₀</div>
+            </button>
+            <button class="maturity-btn active" data-maturity="hvm">
+              <div style="font-weight:700;font-size:0.8rem;">HVM</div>
+              <div style="font-size:0.65rem;opacity:0.7;">1× D₀</div>
+            </button>
+            <button class="maturity-btn" data-maturity="mature">
+              <div style="font-weight:700;font-size:0.8rem;">Mature</div>
+              <div style="font-size:0.65rem;opacity:0.7;">0.7× D₀</div>
+            </button>
+          </div>
+          <div id="maturityNote" style="margin-top:6px;font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);"></div>
+        </div>
+
+        <div class="form-group">
           <label for="waferCost">
             Wafer Cost
             <span class="tooltip-wrap">
@@ -142,6 +171,8 @@
         <div class="card" style="margin-bottom:20px;">
           <div class="card-title">// Results — Murphy's Law Model</div>
 
+          <div id="nodeNote" style="display:none;background:rgba(0,200,255,0.06);border:1px solid rgba(0,200,255,0.2);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:0.78rem;color:var(--text-muted);line-height:1.5;"></div>
+
           <div class="result-grid">
             <div class="result-item">
               <div class="result-label">Dies / Wafer</div>
@@ -169,6 +200,11 @@
             <div class="yield-bar-track">
               <div class="yield-bar-fill" id="yieldBarFill" style="width:0%"></div>
             </div>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+            <span>D₀ base: <span id="res-d0-base" style="color:var(--text)">—</span> /cm²</span>
+            <span>D₀ effective: <span id="res-d0-eff" style="color:var(--accent)">—</span> /cm²</span>
           </div>
         </div>
 

@@ -3,19 +3,38 @@ import {
   PROCESS_NODES,
   WAFER_DIAMETERS_MM,
   WAFER_COSTS,
+  MATURITY_LEVELS,
 } from './calculator.js';
 
 // ── Populate selects ──────────────────────────────────────────
 const nodeSelect  = document.getElementById('processNode');
 const waferSelect = document.getElementById('waferSize');
+let selectedMaturity = 'hvm';
 
-Object.entries(PROCESS_NODES).forEach(([key, n]) => {
+// Group nodes: industry nodes first, then Intel nodes
+const industryNodes = Object.entries(PROCESS_NODES).filter(([,n]) => n.vendor === 'industry');
+const intelNodes    = Object.entries(PROCESS_NODES).filter(([,n]) => n.vendor === 'intel');
+
+const grpIndustry = document.createElement('optgroup');
+grpIndustry.label = 'Industry Nodes';
+industryNodes.forEach(([key, n]) => {
   const opt = document.createElement('option');
   opt.value = key;
   opt.textContent = n.label;
   if (key === '14nm') opt.selected = true;
-  nodeSelect.appendChild(opt);
+  grpIndustry.appendChild(opt);
 });
+nodeSelect.appendChild(grpIndustry);
+
+const grpIntel = document.createElement('optgroup');
+grpIntel.label = 'Intel Process Nodes';
+intelNodes.forEach(([key, n]) => {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = n.label;
+  grpIntel.appendChild(opt);
+});
+nodeSelect.appendChild(grpIntel);
 
 Object.keys(WAFER_DIAMETERS_MM).forEach(label => {
   const opt = document.createElement('option');
@@ -177,7 +196,7 @@ function updateResults() {
 
   let result;
   try {
-    result = calculate({ waferDiamMm, dieAreaMm2, processNode, waferCostOverride, edgeLossMm: edgeLoss });
+    result = calculate({ waferDiamMm, dieAreaMm2, processNode, maturity: selectedMaturity, waferCostOverride, edgeLossMm: edgeLoss });
   } catch(e) {
     console.error(e);
     return;
@@ -189,6 +208,19 @@ function updateResults() {
   document.getElementById('res-yield').textContent = yPct;
   document.getElementById('res-gdpw').textContent  = fmt(result.goodDiesPerWafer);
   document.getElementById('res-cpgd').textContent  = fmtMoney(result.costPerGoodDie);
+
+  // D₀ display
+  document.getElementById('res-d0-base').textContent = result.defectDensityBase.toFixed(3);
+  document.getElementById('res-d0-eff').textContent  = result.defectDensityEffective.toFixed(3);
+
+  // Node note (Intel / special nodes)
+  const noteEl = document.getElementById('nodeNote');
+  if (result.nodeNote) {
+    noteEl.textContent = result.nodeNote;
+    noteEl.style.display = 'block';
+  } else {
+    noteEl.style.display = 'none';
+  }
 
   document.getElementById('res-yield').className = 'result-value ' + yieldClass(result.yieldMurphy);
   document.getElementById('res-gdpw').className  = 'result-value ' + yieldClass(result.yieldMurphy);
@@ -202,6 +234,16 @@ function updateResults() {
 
   drawWafer(waferDiamMm, dieWidthMm, dieHeightMm, result.yieldMurphy, edgeLoss);
 }
+
+// ── Maturity toggle ───────────────────────────────────────────
+document.querySelectorAll('.maturity-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.maturity-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedMaturity = btn.dataset.maturity;
+    updateResults();
+  });
+});
 
 // ── Wire inputs ───────────────────────────────────────────────
 ['processNode', 'waferSize', 'dieWidth', 'dieHeight', 'waferCost', 'edgeLoss'].forEach(id => {

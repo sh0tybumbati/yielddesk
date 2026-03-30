@@ -506,3 +506,22 @@ footer {
   box-shadow: var(--shadow);
 }
 .tooltip-wrap:hover .tooltip-box { display: block; }
+
+/* ── Maturity buttons ── */
+.maturity-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 8px 4px;
+  text-align: center;
+  transition: all 0.15s;
+  font-family: var(--font-mono);
+}
+.maturity-btn:hover { border-color: var(--accent); color: var(--text); }
+.maturity-btn.active {
+  background: rgba(0,200,255,0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
