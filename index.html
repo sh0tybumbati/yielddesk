@@ -138,6 +138,79 @@
         </div>
 
         <div class="form-group">
+          <label for="yieldModel">
+            Yield Model
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Different models assume different defect clustering distributions. Murphy is industry standard for random clusters. Poisson assumes uniform distribution.</span>
+            </span>
+          </label>
+          <select id="yieldModel">
+            <option value="murphy" selected>Murphy's Law — [(1−e^(−λ))/λ]²</option>
+            <option value="poisson">Poisson — e^(−λ)</option>
+            <option value="rectangular">Rectangular — (1−e^(−2λ))/(2λ)</option>
+            <option value="moore">Moore — e^(−√λ)</option>
+            <option value="seeds">Seeds — 1/(1+λ)</option>
+            <option value="bose_einstein">Bose-Einstein — (1/(1+λ))^n</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="critLayersGroup" style="display:none;">
+          <label for="critLayers">
+            Critical Layers
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Number of critical process layers. Used only by the Bose-Einstein model. Typical range: 10–40.</span>
+            </span>
+          </label>
+          <input type="number" id="critLayers" value="25" min="1" max="100" step="1">
+        </div>
+
+        <div class="form-group">
+          <label>
+            Scribe Lines
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Dicing street width between dies. Reduces effective packing. Typically 0.05–0.2mm.</span>
+            </span>
+          </label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div>
+              <div style="font-size:0.72rem;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:4px;">X (horizontal)</div>
+              <div class="input-unit">
+                <input type="number" id="scrLineX" value="0.1" min="0" max="5" step="0.05">
+                <span class="unit">mm</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:0.72rem;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:4px;">Y (vertical)</div>
+              <div class="input-unit">
+                <input type="number" id="scrLineY" value="0.1" min="0" max="5" step="0.05">
+                <span class="unit">mm</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="critArea">
+            Critical Area
+            <span class="tooltip-wrap">
+              <span class="tooltip-icon">?</span>
+              <span class="tooltip-box">Area of the die where a defect would cause failure. Usually less than total die area (redundancy, non-critical blocks). Leave blank to use full die area.</span>
+            </span>
+          </label>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <input type="checkbox" id="allCritical" checked style="width:auto;margin:0;">
+            <label for="allCritical" style="margin:0;font-size:0.8rem;color:var(--text-muted);cursor:pointer;">All critical (use full die area)</label>
+          </div>
+          <div class="input-unit" id="critAreaInput" style="display:none;">
+            <input type="number" id="critArea" min="0.01" max="10000" step="0.1" placeholder="mm²">
+            <span class="unit">mm²</span>
+          </div>
+        </div>
+
+        <div class="form-group">
           <label for="waferCost">
             Wafer Cost
             <span class="tooltip-wrap">
@@ -169,7 +242,7 @@
       <!-- Results -->
       <div>
         <div class="card" style="margin-bottom:20px;">
-          <div class="card-title">// Results — Murphy's Law Model</div>
+          <div class="card-title" id="resultsTitle">// Results</div>
 
           <div id="nodeNote" style="display:none;background:rgba(0,200,255,0.06);border:1px solid rgba(0,200,255,0.2);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:0.78rem;color:var(--text-muted);line-height:1.5;"></div>
 
@@ -220,14 +293,27 @@
           </p>
         </div>
 
-        <!-- Export -->
-        <div class="card">
-          <div class="card-title">// Info</div>
-          <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
-            Yield calculated using the <strong style="color:var(--text)">Murphy's Law model</strong> (Seeds, 1988).
-            Defect density (D₀) values are based on published ITRS/IRDS data per node.
-            Wafer costs are market estimates — override with your fab quote for accurate cost/die.
+        <!-- Sensitivity curve -->
+        <div class="card" style="margin-bottom:20px;">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>// Yield vs Die Area</span>
+            <span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono);">current node + maturity</span>
+          </div>
+          <canvas id="curveCanvas" style="width:100%;height:160px;display:block;"></canvas>
+          <p style="font-size:0.72rem;color:var(--text-muted);margin-top:8px;font-family:var(--font-mono);">
+            <span style="color:var(--accent)">●</span> Your die &nbsp;
+            <span style="color:var(--text-dim)">— Yield curve for selected node &amp; maturity</span>
           </p>
+        </div>
+
+        <!-- Share -->
+        <div class="card">
+          <div class="card-title">// Share</div>
+          <div style="display:flex;gap:8px;">
+            <input id="shareUrl" readonly style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-muted);font-family:var(--font-mono);font-size:0.72rem;padding:8px 10px;outline:none;" placeholder="Generate a permalink…">
+            <button id="shareBtn" class="btn btn-secondary" style="white-space:nowrap;padding:8px 14px;font-size:0.8rem;">Copy Link</button>
+          </div>
+          <p style="margin-top:8px;font-size:0.75rem;color:var(--text-muted);">Encodes all current parameters into a shareable URL.</p>
         </div>
       </div>
     </div>
