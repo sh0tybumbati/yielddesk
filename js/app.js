@@ -6,7 +6,7 @@ import {
 } from './calculator.js';
 
 // ── Populate selects ──────────────────────────────────────────
-const nodeSelect = document.getElementById('processNode');
+const nodeSelect  = document.getElementById('processNode');
 const waferSelect = document.getElementById('waferSize');
 
 Object.entries(PROCESS_NODES).forEach(([key, n]) => {
@@ -27,17 +27,26 @@ Object.keys(WAFER_DIAMETERS_MM).forEach(label => {
 
 // ── Wafer canvas ──────────────────────────────────────────────
 const canvas = document.getElementById('waferCanvas');
-const ctx = canvas.getContext('2d');
-const CANVAS_SIZE = 240;
-canvas.width = CANVAS_SIZE;
+const ctx    = canvas.getContext('2d');
+const CANVAS_SIZE = 260;
+canvas.width  = CANVAS_SIZE;
 canvas.height = CANVAS_SIZE;
 
-function drawWafer(waferDiamMm, dieAreaMm2, yieldFrac) {
+// Seeded LCG random — same seed → same die pattern per yield value
+function seededRand(seed) {
+  let s = (seed * 9301 + 49297) % 233280;
+  return () => {
+    s = (s * 9301 + 49297) % 233280;
+    return s / 233280;
+  };
+}
+
+function drawWafer(waferDiamMm, dieWidthMm, dieHeightMm, yieldFrac, edgeLossMm) {
   ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
   const cx = CANVAS_SIZE / 2;
   const cy = CANVAS_SIZE / 2;
-  const r  = (CANVAS_SIZE / 2) - 6;
+  const r  = CANVAS_SIZE / 2 - 6;
 
   // Wafer background
   const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
@@ -51,46 +60,82 @@ function drawWafer(waferDiamMm, dieAreaMm2, yieldFrac) {
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // Draw dies
-  const scale = (CANVAS_SIZE - 12) / waferDiamMm;
-  const diePx = Math.sqrt(dieAreaMm2) * scale;
-  const diePxClamped = Math.max(diePx, 2);
+  const scale          = (r * 2) / waferDiamMm;       // px per mm
+  const dieWPx         = dieWidthMm  * scale;
+  const dieHPx         = dieHeightMm * scale;
+  const effectiveRPx   = (waferDiamMm / 2 - edgeLossMm) * scale;
 
-  let col = Math.floor((waferDiamMm - 6) / Math.sqrt(dieAreaMm2));
-  col = Math.min(col, 40);
-  const startX = cx - (col * diePxClamped) / 2;
-  const startY = cy - (col * diePxClamped) / 2;
+  // If dies are too small to render individually, draw a yield heatmap instead
+  if (dieWPx < 1.5 || dieHPx < 1.5) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, effectiveRPx, 0, Math.PI * 2);
+    const hue = yieldFrac * 120; // 0=red, 120=green
+    ctx.fillStyle = `hsla(${hue}, 80%, 45%, 0.6)`;
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.font = 'bold 13px monospace';
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${(yieldFrac * 100).toFixed(1)}% yield`, cx, cy - 8);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '10px monospace';
+    ctx.fillText('(dies too small to render)', cx, cy + 10);
+    ctx.restore();
+
+    drawNotch(cx, cy, r);
+    return;
+  }
+
+  // Tile dies across the full wafer diameter
+  const numCols = Math.ceil(waferDiamMm / dieWidthMm)  + 2;
+  const numRows = Math.ceil(waferDiamMm / dieHeightMm) + 2;
+
+  // Center the grid on the wafer
+  const startX = cx - (numCols * dieWPx) / 2;
+  const startY = cy - (numRows * dieHPx) / 2;
+
+  const rand = seededRand(Math.round(yieldFrac * 10000));
 
   ctx.save();
   ctx.beginPath();
-  ctx.arc(cx, cy, r - 2, 0, Math.PI * 2);
+  ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
   ctx.clip();
 
-  for (let row = 0; row < col; row++) {
-    for (let c = 0; c < col; c++) {
-      const x = startX + c * diePxClamped;
-      const y = startY + row * diePxClamped;
+  for (let row = 0; row < numRows; row++) {
+    for (let col = 0; col < numCols; col++) {
+      const x = startX + col * dieWPx;
+      const y = startY + row * dieHPx;
 
-      // Check if die center is inside wafer
-      const dcx = x + diePxClamped / 2 - cx;
-      const dcy = y + diePxClamped / 2 - cy;
-      if (Math.sqrt(dcx * dcx + dcy * dcy) > r - 3) continue;
+      // Die center relative to wafer center
+      const dcx = x + dieWPx / 2 - cx;
+      const dcy = y + dieHPx / 2 - cy;
 
-      const isGood = Math.random() < yieldFrac;
-      ctx.fillStyle = isGood ? 'rgba(0,232,122,0.7)' : 'rgba(255,74,106,0.5)';
-      ctx.fillRect(x + 0.5, y + 0.5, diePxClamped - 1, diePxClamped - 1);
-      if (diePxClamped > 4) {
-        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+      // Skip if center is outside effective wafer radius
+      if (Math.sqrt(dcx * dcx + dcy * dcy) > effectiveRPx) continue;
+
+      const isGood = rand() < yieldFrac;
+      ctx.fillStyle = isGood ? 'rgba(0,232,122,0.75)' : 'rgba(255,74,106,0.6)';
+      ctx.fillRect(x + 0.5, y + 0.5, dieWPx - 1, dieHPx - 1);
+
+      if (dieWPx > 5 && dieHPx > 5) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)';
         ctx.lineWidth = 0.5;
-        ctx.strokeRect(x + 0.5, y + 0.5, diePxClamped - 1, diePxClamped - 1);
+        ctx.strokeRect(x + 0.5, y + 0.5, dieWPx - 1, dieHPx - 1);
       }
     }
   }
-  ctx.restore();
 
-  // Flat / notch
+  ctx.restore();
+  drawNotch(cx, cy, r);
+}
+
+function drawNotch(cx, cy, r) {
   ctx.beginPath();
-  ctx.arc(cx, cy + r - 4, 4, 0, Math.PI * 2);
+  ctx.arc(cx, cy + r - 3, 4, 0, Math.PI * 2);
   ctx.fillStyle = '#0a0e14';
   ctx.fill();
 }
@@ -102,8 +147,8 @@ function yieldClass(y) {
   return 'bad';
 }
 
-function fmt(n, decimals = 0) {
-  return n.toLocaleString('en-US', { maximumFractionDigits: decimals });
+function fmt(n) {
+  return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
 }
 
 function fmtMoney(n) {
@@ -112,16 +157,19 @@ function fmtMoney(n) {
   return `$${n.toFixed(2)}`;
 }
 
-let lastResult = null;
-
 function updateResults() {
-  const waferLabel   = waferSelect.value;
-  const waferDiamMm  = WAFER_DIAMETERS_MM[waferLabel];
-  const dieAreaMm2   = parseFloat(document.getElementById('dieArea').value) || 100;
-  const processNode  = nodeSelect.value;
-  const waferCostRaw = document.getElementById('waferCost').value;
+  const waferLabel      = waferSelect.value;
+  const waferDiamMm     = WAFER_DIAMETERS_MM[waferLabel];
+  const dieWidthMm      = parseFloat(document.getElementById('dieWidth').value)  || 10;
+  const dieHeightMm     = parseFloat(document.getElementById('dieHeight').value) || 10;
+  const dieAreaMm2      = dieWidthMm * dieHeightMm;
+  const processNode     = nodeSelect.value;
+  const waferCostRaw    = document.getElementById('waferCost').value;
   const waferCostOverride = waferCostRaw ? parseFloat(waferCostRaw) : undefined;
-  const edgeLoss     = parseFloat(document.getElementById('edgeLoss').value) || 3;
+  const edgeLoss        = parseFloat(document.getElementById('edgeLoss').value) || 3;
+
+  // Show computed area
+  document.getElementById('dieAreaDisplay').textContent = dieAreaMm2.toFixed(2) + ' mm²';
 
   // Update wafer cost placeholder
   const defaultCost = WAFER_COSTS[processNode];
@@ -135,99 +183,30 @@ function updateResults() {
     return;
   }
 
-  lastResult = result;
-
   const yPct = (result.yieldMurphy * 100).toFixed(1) + '%';
 
-  // Main result values
-  document.getElementById('res-dpw').textContent      = fmt(result.diesPerWafer);
-  document.getElementById('res-yield').textContent    = yPct;
-  document.getElementById('res-gdpw').textContent     = fmt(result.goodDiesPerWafer);
-  document.getElementById('res-cpgd').textContent     = fmtMoney(result.costPerGoodDie);
+  document.getElementById('res-dpw').textContent  = fmt(result.diesPerWafer);
+  document.getElementById('res-yield').textContent = yPct;
+  document.getElementById('res-gdpw').textContent  = fmt(result.goodDiesPerWafer);
+  document.getElementById('res-cpgd').textContent  = fmtMoney(result.costPerGoodDie);
 
   document.getElementById('res-yield').className = 'result-value ' + yieldClass(result.yieldMurphy);
   document.getElementById('res-gdpw').className  = 'result-value ' + yieldClass(result.yieldMurphy);
 
-  // Yield bar
   const bar = document.getElementById('yieldBarFill');
-  bar.style.width = (result.yieldMurphy * 100) + '%';
+  bar.style.width      = (result.yieldMurphy * 100) + '%';
   bar.style.background = result.yieldMurphy >= 0.7 ? 'var(--green)' :
                          result.yieldMurphy >= 0.4 ? 'var(--yellow)' : 'var(--red)';
 
   document.getElementById('yieldBarLabel').textContent = yPct;
 
-  // Wafer canvas
-  drawWafer(waferDiamMm, dieAreaMm2, result.yieldMurphy);
+  drawWafer(waferDiamMm, dieWidthMm, dieHeightMm, result.yieldMurphy, edgeLoss);
 }
 
 // ── Wire inputs ───────────────────────────────────────────────
-['processNode', 'waferSize', 'dieArea', 'waferCost', 'edgeLoss'].forEach(id => {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('input', updateResults);
+['processNode', 'waferSize', 'dieWidth', 'dieHeight', 'waferCost', 'edgeLoss'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', updateResults);
 });
-
-// ── Export CSV (Pro gate) ─────────────────────────────────────
-document.getElementById('exportBtn')?.addEventListener('click', () => {
-  if (!isPro()) {
-    showProModal();
-    return;
-  }
-  if (!lastResult) return;
-  const rows = [
-    ['Metric', 'Value'],
-    ['Process Node', lastResult.processNodeLabel],
-    ['Die Area (mm²)', document.getElementById('dieArea').value],
-    ['Wafer Diameter', waferSelect.value],
-    ['Dies Per Wafer', lastResult.diesPerWafer],
-    ['Murphy Yield', (lastResult.yieldMurphy * 100).toFixed(2) + '%'],
-    ['Poisson Yield', (lastResult.yieldPoisson * 100).toFixed(2) + '%'],
-    ['Good Dies Per Wafer', lastResult.goodDiesPerWafer],
-    ['Wafer Cost', '$' + lastResult.waferCost],
-    ['Cost Per Good Die', lastResult.costPerGoodDie?.toFixed(2) ?? 'N/A'],
-    ['Defect Density (D0)', lastResult.defectDensity + ' /cm²'],
-  ];
-  const csv = rows.map(r => r.join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'yielddesk-result.csv'; a.click();
-  URL.revokeObjectURL(url);
-});
-
-// ── Pro status ────────────────────────────────────────────────
-function isPro() {
-  return localStorage.getItem('yd_pro') === 'true';
-}
-
-function showProModal() {
-  document.getElementById('proModal').style.display = 'flex';
-}
-
-document.getElementById('proModal')?.addEventListener('click', e => {
-  if (e.target === document.getElementById('proModal'))
-    document.getElementById('proModal').style.display = 'none';
-});
-
-document.getElementById('closeProModal')?.addEventListener('click', () => {
-  document.getElementById('proModal').style.display = 'none';
-});
-
-// Check for Stripe success redirect
-const params = new URLSearchParams(window.location.search);
-if (params.get('payment') === 'success') {
-  localStorage.setItem('yd_pro', 'true');
-  window.history.replaceState({}, '', window.location.pathname);
-  document.getElementById('proSuccessBanner')?.style.setProperty('display', 'flex');
-  setTimeout(() => {
-    document.getElementById('proSuccessBanner')?.style.setProperty('display', 'none');
-  }, 6000);
-}
-
-if (isPro()) {
-  document.querySelectorAll('.pro-only-hidden').forEach(el => el.style.display = 'block');
-  document.querySelectorAll('.upgrade-prompt').forEach(el => el.style.display = 'none');
-  document.querySelectorAll('.pro-badge-show').forEach(el => el.style.display = 'inline-flex');
-}
 
 // ── Init ──────────────────────────────────────────────────────
 updateResults();
