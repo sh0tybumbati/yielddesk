@@ -282,3 +282,89 @@ export function yieldCurve({ processNode, maturity = 'hvm', yieldModel = 'murphy
   }
   return result;
 }
+
+/**
+ * System yield for a multi-die chiplet / multi-tile assembly.
+ * Each die: { name, nodeKey, dieWidthMm, dieHeightMm, maturity, count, bondingYieldPct }
+ * Uses Murphy model for individual die yields; 300mm wafer for cost estimation.
+ * System yield = ∏(die_yield_i ^ count_i) × ∏(bonding_yield_i ^ count_i)
+ * Total system cost = Σ(cost_per_good_die_i × count_i) / system_yield
+ */
+export function calculateSystemYield(dies, waferDiamMm = 300) {
+  const dieResults = dies.map(die => {
+    const node = PROCESS_NODES[die.nodeKey];
+    if (!node) return null;
+    const maturityLevel = MATURITY_LEVELS[die.maturity] ?? MATURITY_LEVELS.hvm;
+    const d0Effective = node.d0 * maturityLevel.multiplier;
+    const dieAreaMm2 = die.dieWidthMm * die.dieHeightMm;
+    const yld = yieldFor('murphy', d0Effective, dieAreaMm2);
+    const dpw = diesPerWafer(waferDiamMm, die.dieWidthMm, die.dieHeightMm);
+    const gdpw = Math.floor(dpw * yld);
+    const waferCost = WAFER_COSTS[die.nodeKey] ?? 2000;
+    const costPerGoodDie = gdpw > 0 ? waferCost / gdpw : null;
+    const bondingYield = (die.bondingYieldPct ?? 99.5) / 100;
+    return {
+      name: die.name || die.nodeKey,
+      nodeKey: die.nodeKey,
+      nodeLabel: node.label,
+      dieYield: yld,
+      costPerGoodDie,
+      count: die.count,
+      bondingYield,
+      d0Effective,
+      dieAreaMm2,
+    };
+  }).filter(Boolean);
+
+  let systemYield = 1;
+  for (const r of dieResults) {
+    systemYield *= Math.pow(r.dieYield, r.count);
+    systemYield *= Math.pow(r.bondingYield, r.count);
+  }
+
+  const dieSubtotal = dieResults.reduce((sum, r) =>
+    sum + (r.costPerGoodDie != null ? r.costPerGoodDie * r.count : 0), 0);
+  const totalSystemCost = systemYield > 0 ? dieSubtotal / systemYield : null;
+
+  return { dieResults, systemYield, totalSystemCost, dieSubtotal };
+}
+
+/**
+ * Monte Carlo D₀ uncertainty bands for the yield sensitivity curve.
+ * Samples D₀ uniformly in [d0Base×(1−u), d0Base×(1+u)] using a seeded LCG.
+ * Returns { p10, p50, p90 } — arrays of { areaMm2, yield }.
+ */
+export function yieldCurveMonteCarlo({ processNode, maturity = 'hvm', yieldModel = 'murphy', critLayers = 25, critFraction = 1.0, uncertaintyPct = 20, samples = 200, seed = 0 }) {
+  const node = PROCESS_NODES[processNode];
+  if (!node) return { p10: [], p50: [], p90: [] };
+  const d0Base = node.d0 * (MATURITY_LEVELS[maturity]?.multiplier ?? 1);
+  const halfU = uncertaintyPct / 100;
+  const POINTS = 80;
+
+  // Seeded LCG (Numerical Recipes constants)
+  let lcgS = seed >>> 0;
+  const lcgNext = () => { lcgS = (Math.imul(lcgS, 1664525) + 1013904223) >>> 0; return lcgS / 0x100000000; };
+
+  // Build sample curves
+  const curves = [];
+  for (let i = 0; i < samples; i++) {
+    const d0 = d0Base * (1 + (lcgNext() * 2 - 1) * halfU);
+    const pts = [];
+    for (let j = 0; j <= POINTS; j++) {
+      const areaMm2 = 1 + (j / POINTS) * 799;
+      pts.push(yieldFor(yieldModel, d0, areaMm2 * critFraction, critLayers));
+    }
+    curves.push(pts);
+  }
+
+  // Extract percentiles at each area point
+  const p10 = [], p50 = [], p90 = [];
+  for (let i = 0; i <= POINTS; i++) {
+    const areaMm2 = 1 + (i / POINTS) * 799;
+    const vals = curves.map(c => c[i]).sort((a, b) => a - b);
+    p10.push({ areaMm2, yield: vals[Math.floor(samples * 0.10)] });
+    p50.push({ areaMm2, yield: vals[Math.floor(samples * 0.50)] });
+    p90.push({ areaMm2, yield: vals[Math.floor(samples * 0.90)] });
+  }
+  return { p10, p50, p90 };
+}

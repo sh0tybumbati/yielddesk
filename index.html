@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>YieldDesk — Semiconductor Yield & Cost Calculator</title>
-  <meta name="description" content="Free semiconductor yield calculator using Murphy's Law model. Calculate dies per wafer, yield percentage, and cost per good die for any process node from 3μm to 2nm.">
+  <title>YieldDesk — Free Semiconductor Yield & Cost Calculator</title>
+  <meta name="description" content="Free semiconductor yield and wafer cost calculator. Murphy's Law, Poisson, and 4 other models. Chiplet / multi-die system yield. Compare all process nodes from 3μm to 2nm.">
+  <link rel="canonical" href="https://sh0tybumbati.github.io/yielddesk/">
   <meta name="keywords" content="semiconductor yield calculator, dies per wafer, Murphy's Law yield, wafer cost calculator, chip yield, process node, die cost">
 
   <!-- Open Graph -->
@@ -284,6 +285,7 @@
             <div class="result-item">
               <div class="result-label">Yield</div>
               <div class="result-value" id="res-yield">—</div>
+              <div id="res-yield-ci" style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-muted);margin-top:3px;display:none;"></div>
             </div>
             <div class="result-item">
               <div class="result-label">Good Dies / Wafer</div>
@@ -345,10 +347,16 @@
             <span>// Yield vs Die Area</span>
             <span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono);">current node + maturity</span>
           </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <label for="d0Uncertainty" style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);white-space:nowrap;">D₀ uncertainty ±</label>
+            <input type="range" id="d0Uncertainty" min="0" max="50" value="20" style="flex:1;accent-color:var(--accent);">
+            <span id="d0UncertaintyLabel" style="font-family:var(--font-mono);font-size:0.72rem;color:var(--accent);min-width:32px;text-align:right;">20%</span>
+          </div>
           <canvas id="curveCanvas" style="width:100%;height:160px;display:block;"></canvas>
           <p style="font-size:0.72rem;color:var(--text-muted);margin-top:8px;font-family:var(--font-mono);">
             <span style="color:var(--accent)">●</span> Your die &nbsp;
-            <span style="color:var(--text-dim)">— Yield curve for selected node &amp; maturity</span>
+            <span style="color:var(--text-dim)">— P50 curve</span> &nbsp;
+            <span style="color:rgba(0,200,255,0.5)">■</span> P10–P90 band
           </p>
         </div>
 
@@ -431,6 +439,42 @@
         Export CSV
       </button>
     </div>
+  </div>
+</section>
+
+<!-- System Yield (Chiplet / Multi-Die) -->
+<section class="compare-section" id="chiplet" style="padding-top:0;">
+  <div class="container--wide">
+    <details>
+      <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;padding:24px 0;border-bottom:1px solid var(--border);">
+        <div>
+          <div class="section-label">// System Yield</div>
+          <h2 class="section-title" style="margin-bottom:0;">Chiplet / Multi-Die Assembly</h2>
+        </div>
+        <span style="font-family:var(--font-mono);font-size:0.75rem;color:var(--accent);padding:4px 10px;border:1px solid rgba(0,200,255,0.25);border-radius:4px;white-space:nowrap;">expand ▼</span>
+      </summary>
+      <div style="padding-top:20px;">
+        <p style="color:var(--text-muted);font-size:0.875rem;margin-bottom:20px;line-height:1.6;">
+          Model a multi-chip system using chiplets, 2.5D interposers, or 3D stacking. Each die contributes its individual yield and assembly bonding yield to the overall system yield. <strong style="color:var(--text);">No other free tool models this.</strong>
+        </p>
+        <!-- Column headers -->
+        <div style="display:grid;grid-template-columns:120px 70px 70px 1fr 100px 50px 80px 32px;gap:6px;padding:4px 0 8px;border-bottom:1px solid var(--border);margin-bottom:4px;">
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;">NAME</div>
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;">WIDTH</div>
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;">HEIGHT</div>
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;">NODE</div>
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;">MATURITY</div>
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;text-align:center;">COUNT</div>
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;">BOND YLD</div>
+          <div></div>
+        </div>
+        <div id="chipletDieList"></div>
+        <div style="margin-top:12px;">
+          <button id="addDieBtn" class="btn btn-secondary" style="font-size:0.8rem;">+ Add Die</button>
+        </div>
+        <div id="chipletResults" style="margin-top:24px;"></div>
+      </div>
+    </details>
   </div>
 </section>
 

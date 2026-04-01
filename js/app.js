@@ -1,7 +1,17 @@
 import {
   calculate, yieldCurve, compareNodes, allModelComparison,
+  calculateSystemYield, yieldCurveMonteCarlo, yieldFor,
   PROCESS_NODES, WAFER_DIAMETERS_MM, WAFER_COSTS, MASK_COSTS, MATURITY_LEVELS, YIELD_MODELS,
 } from './calculator.js';
+
+// FNV-1a hash — used to derive reproducible MC seeds from node+maturity+model
+function strHash(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
+  }
+  return h;
+}
 
 // ── Populate selects ──────────────────────────────────────────
 const nodeSelect  = document.getElementById('processNode');
@@ -108,7 +118,7 @@ function drawNotch(cx, cy, r) {
 const curveCanvas = document.getElementById('curveCanvas');
 const cCtx = curveCanvas.getContext('2d');
 
-function drawCurve(processNode, maturity, yieldModel, critLayers, currentAreaMm2, currentYield) {
+function drawCurve(processNode, maturity, yieldModel, critLayers, currentAreaMm2, currentYield, uncertaintyPct = 0) {
   const dpr = window.devicePixelRatio || 1;
   const rect = curveCanvas.getBoundingClientRect();
   curveCanvas.width  = rect.width  * dpr;
@@ -145,9 +155,33 @@ function drawCurve(processNode, maturity, yieldModel, critLayers, currentAreaMm2
   cCtx.fillStyle = '#3d5068';
   cCtx.fillText('Die area (mm²)', pad.left + gW / 2, pad.top + gH + 16);
 
-  // Curve
+  // Monte Carlo uncertainty band + P50
+  let curvePoints = points;
+  if (uncertaintyPct > 0) {
+    const seed = strHash(processNode + maturity + yieldModel);
+    const mc = yieldCurveMonteCarlo({ processNode, maturity, yieldModel, critLayers, uncertaintyPct, samples: 200, seed });
+    if (mc.p10.length) {
+      // Filled P10–P90 band
+      cCtx.beginPath();
+      mc.p90.forEach((p, i) => {
+        const x = pad.left + (p.areaMm2 / maxArea) * gW;
+        const y = pad.top  + gH * (1 - p.yield);
+        i === 0 ? cCtx.moveTo(x, y) : cCtx.lineTo(x, y);
+      });
+      for (let i = mc.p10.length - 1; i >= 0; i--) {
+        const p = mc.p10[i];
+        cCtx.lineTo(pad.left + (p.areaMm2 / maxArea) * gW, pad.top + gH * (1 - p.yield));
+      }
+      cCtx.closePath();
+      cCtx.fillStyle = 'rgba(0,200,255,0.10)';
+      cCtx.fill();
+      curvePoints = mc.p50;
+    }
+  }
+
+  // Curve (P50 or deterministic)
   cCtx.beginPath();
-  points.forEach((p, i) => {
+  curvePoints.forEach((p, i) => {
     const x = pad.left + (p.areaMm2 / maxArea) * gW;
     const y = pad.top  + gH * (1 - p.yield);
     i === 0 ? cCtx.moveTo(x, y) : cCtx.lineTo(x, y);
@@ -280,8 +314,33 @@ function updateResults() {
   if (result.nodeNote) { noteEl.textContent = result.nodeNote; noteEl.style.display = 'block'; }
   else { noteEl.style.display = 'none'; }
 
+  // D₀ uncertainty CI
+  const uncertaintyPct = parseInt(document.getElementById('d0Uncertainty')?.value) || 0;
+  const ciEl = document.getElementById('res-yield-ci');
+  if (ciEl) {
+    if (uncertaintyPct > 0) {
+      const seed = strHash(processNode + selectedMaturity + yieldModel);
+      let lcgS = seed >>> 0;
+      const lcgNext = () => { lcgS = (Math.imul(lcgS, 1664525) + 1013904223) >>> 0; return lcgS / 0x100000000; };
+      const halfU = uncertaintyPct / 100;
+      const d0Base = result.defectDensityBase * (MATURITY_LEVELS[selectedMaturity]?.multiplier ?? 1);
+      const mcYields = [];
+      for (let i = 0; i < 200; i++) {
+        const d0 = d0Base * (1 + (lcgNext() * 2 - 1) * halfU);
+        mcYields.push(yieldFor(yieldModel, d0, result.critAreaMm2, critLayers));
+      }
+      mcYields.sort((a, b) => a - b);
+      const p10 = (mcYields[20] * 100).toFixed(0);
+      const p90 = (mcYields[180] * 100).toFixed(0);
+      ciEl.textContent = `P10: ${p10}% — P90: ${p90}%`;
+      ciEl.style.display = 'block';
+    } else {
+      ciEl.style.display = 'none';
+    }
+  }
+
   drawWafer(waferDiamMm, dieWidthMm, dieHeightMm, result.yield, edgeLoss, scrLineX, scrLineY);
-  drawCurve(processNode, selectedMaturity, yieldModel, critLayers, result.critAreaMm2, result.yield);
+  drawCurve(processNode, selectedMaturity, yieldModel, critLayers, result.critAreaMm2, result.yield, uncertaintyPct);
   updateShareUrl();
   updateCompareTable();
   updateModelComparison(result);
@@ -363,6 +422,12 @@ document.querySelectorAll('.maturity-btn').forEach(btn => {
  'critLayers', 'critArea', 'scrLineX', 'scrLineY',
  'waferCount', 'maskCost', 'waferCost', 'edgeLoss'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', updateResults);
+});
+
+document.getElementById('d0Uncertainty')?.addEventListener('input', () => {
+  const val = document.getElementById('d0Uncertainty').value;
+  document.getElementById('d0UncertaintyLabel').textContent = val + '%';
+  updateResults();
 });
 
 // ── URL sharing ───────────────────────────────────────────────
@@ -598,6 +663,151 @@ document.getElementById('csvExportBtn').addEventListener('click', () => {
 const ro = new ResizeObserver(() => updateResults());
 ro.observe(curveCanvas);
 
+// ── Chiplet / Multi-Die System Yield ─────────────────────────
+let chipletDies = [
+  { id: 1, name: 'Compute Die', nodeKey: '3nm',  dieWidthMm: 10, dieHeightMm: 10, maturity: 'hvm', count: 1, bondingYieldPct: 99.5 },
+  { id: 2, name: 'Memory Die',  nodeKey: '7nm',  dieWidthMm: 8,  dieHeightMm: 8,  maturity: 'hvm', count: 4, bondingYieldPct: 99.5 },
+];
+let chipletIdSeq = 2;
+
+function buildNodeOpts(selected) {
+  return Object.entries(PROCESS_NODES).map(([k, n]) =>
+    `<option value="${k}"${k === selected ? ' selected' : ''}>${n.label}</option>`
+  ).join('');
+}
+
+function buildMaturityOpts(selected) {
+  return Object.entries(MATURITY_LEVELS).map(([k, m]) =>
+    `<option value="${k}"${k === selected ? ' selected' : ''}>${m.label}</option>`
+  ).join('');
+}
+
+const inputStyle = 'background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-family:var(--font-mono);font-size:0.75rem;width:100%;box-sizing:border-box;';
+
+function renderChipletDies() {
+  const list = document.getElementById('chipletDieList');
+  if (!list) return;
+  list.innerHTML = '';
+  chipletDies.forEach(die => {
+    const row = document.createElement('div');
+    row.dataset.id = die.id;
+    row.style.cssText = 'display:grid;grid-template-columns:120px 70px 70px 1fr 100px 50px 80px 32px;gap:6px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(30,45,66,0.6);';
+    row.innerHTML = `
+      <input type="text" value="${die.name}" placeholder="Name" style="${inputStyle}" data-field="name">
+      <div style="display:flex;align-items:center;gap:2px;">
+        <input type="number" value="${die.dieWidthMm}" min="0.1" step="0.1" style="${inputStyle}" data-field="dieWidthMm">
+        <span style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);">mm</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:2px;">
+        <input type="number" value="${die.dieHeightMm}" min="0.1" step="0.1" style="${inputStyle}" data-field="dieHeightMm">
+        <span style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);">mm</span>
+      </div>
+      <select style="${inputStyle}" data-field="nodeKey">${buildNodeOpts(die.nodeKey)}</select>
+      <select style="${inputStyle}" data-field="maturity">${buildMaturityOpts(die.maturity)}</select>
+      <input type="number" value="${die.count}" min="1" max="100" step="1" style="${inputStyle}text-align:center;" data-field="count">
+      <div style="display:flex;align-items:center;gap:2px;">
+        <input type="number" value="${die.bondingYieldPct}" min="0" max="100" step="0.1" style="${inputStyle}" data-field="bondingYieldPct">
+        <span style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);">%</span>
+      </div>
+      <button style="background:rgba(255,74,106,0.12);border:1px solid rgba(255,74,106,0.25);color:var(--red);border-radius:4px;padding:4px 6px;cursor:pointer;font-size:0.85rem;line-height:1;" data-remove="${die.id}">×</button>
+    `;
+
+    row.querySelectorAll('[data-field]').forEach(el => {
+      el.addEventListener('change', () => setDieField(die.id, el.dataset.field, el.value));
+      el.addEventListener('input',  () => setDieField(die.id, el.dataset.field, el.value));
+    });
+
+    row.querySelector('[data-remove]')?.addEventListener('click', () => {
+      chipletDies = chipletDies.filter(d => d.id !== die.id);
+      renderChipletDies();
+      updateChipletResults();
+    });
+
+    list.appendChild(row);
+  });
+}
+
+function setDieField(id, field, value) {
+  const die = chipletDies.find(d => d.id === id);
+  if (!die) return;
+  if (['dieWidthMm', 'dieHeightMm', 'count', 'bondingYieldPct'].includes(field)) {
+    die[field] = parseFloat(value) || 0;
+  } else {
+    die[field] = value;
+  }
+  updateChipletResults();
+}
+
+function updateChipletResults() {
+  const el = document.getElementById('chipletResults');
+  if (!el) return;
+  if (!chipletDies.length) { el.innerHTML = ''; return; }
+
+  const res = calculateSystemYield(chipletDies);
+  const { dieResults, systemYield, totalSystemCost, dieSubtotal } = res;
+
+  const sysPct = (systemYield * 100).toFixed(2);
+  const sysColor = systemYield >= 0.5 ? 'var(--green)' : systemYield >= 0.2 ? 'var(--yellow)' : 'var(--red)';
+
+  const tableRows = dieResults.map(r => {
+    const contrib = Math.pow(r.dieYield, r.count) * Math.pow(r.bondingYield, r.count);
+    const yColor  = r.dieYield >= 0.7 ? 'var(--green)' : r.dieYield >= 0.4 ? 'var(--yellow)' : 'var(--red)';
+    return `<tr style="border-bottom:1px solid rgba(30,45,66,0.5);">
+      <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.78rem;">${r.name}</td>
+      <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);">${r.nodeLabel.split('(')[0].trim()}</td>
+      <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.72rem;">${r.dieAreaMm2.toFixed(1)}</td>
+      <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.78rem;color:${yColor};">${(r.dieYield * 100).toFixed(1)}%</td>
+      <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.78rem;">${r.costPerGoodDie != null ? fmtMoney(r.costPerGoodDie) : '—'}</td>
+      <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.72rem;text-align:center;">${r.count}</td>
+      <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);">${(r.bondingYield * 100).toFixed(1)}%</td>
+      <td style="padding:6px 8px;font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);">${(contrib * 100).toFixed(2)}%</td>
+    </tr>`;
+  }).join('');
+
+  const thStyle = 'padding:6px 8px;font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;font-weight:400;text-align:left;border-bottom:1px solid var(--border);';
+  el.innerHTML = `
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr>
+          <th style="${thStyle}">DIE</th><th style="${thStyle}">NODE</th>
+          <th style="${thStyle}">AREA mm²</th><th style="${thStyle}">YIELD</th>
+          <th style="${thStyle}">COST/GOOD DIE</th><th style="${thStyle}">COUNT</th>
+          <th style="${thStyle}">BOND YIELD</th><th style="${thStyle}">CONTRIBUTION</th>
+        </tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:16px;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(0,200,255,0.04);">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:10px;">
+        <div>
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;margin-bottom:4px;">SYSTEM YIELD</div>
+          <div style="font-family:var(--font-mono);font-size:1.5rem;font-weight:700;color:${sysColor};">${sysPct}%</div>
+        </div>
+        <div>
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;margin-bottom:4px;">TOTAL SYSTEM COST</div>
+          <div style="font-family:var(--font-mono);font-size:1.5rem;font-weight:700;color:var(--accent);">${totalSystemCost != null ? fmtMoney(totalSystemCost) : '—'}</div>
+        </div>
+        <div>
+          <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;margin-bottom:4px;">DIE COST SUBTOTAL</div>
+          <div style="font-family:var(--font-mono);font-size:1rem;font-weight:600;color:var(--text-muted);margin-top:6px;">${fmtMoney(dieSubtotal)}</div>
+        </div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-muted);font-family:var(--font-mono);line-height:1.5;">
+        System yield = ∏(die_yield<sup>count</sup>) × ∏(bond_yield<sup>count</sup>) &nbsp;·&nbsp; Die costs use 300mm wafer defaults
+      </div>
+    </div>
+  `;
+}
+
+document.getElementById('addDieBtn')?.addEventListener('click', () => {
+  chipletIdSeq++;
+  chipletDies.push({ id: chipletIdSeq, name: `Die ${chipletIdSeq}`, nodeKey: '14nm', dieWidthMm: 10, dieHeightMm: 10, maturity: 'hvm', count: 1, bondingYieldPct: 99.5 });
+  renderChipletDies();
+  updateChipletResults();
+});
+
 // ── Init ──────────────────────────────────────────────────────
 loadFromUrl();
 updateResults();
+renderChipletDies();
+updateChipletResults();
