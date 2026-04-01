@@ -1,0 +1,5 @@
+RALPH_MAX_CALLS_PER_HOUR=50
+RALPH_TIMEOUT=20
+RALPH_OUTPUT_FORMAT=json
+RALPH_SESSION_EXPIRY=24
+RALPH_ALLOWED_TOOLS=Write,Read,Edit,WebSearch,WebFetch,Bash(git add *),Bash(git commit *),Bash(git status),Bash(git push *)

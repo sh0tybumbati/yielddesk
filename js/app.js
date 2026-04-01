@@ -1,5 +1,5 @@
 import {
-  calculate, yieldCurve,
+  calculate, yieldCurve, compareNodes, allModelComparison,
   PROCESS_NODES, WAFER_DIAMETERS_MM, WAFER_COSTS, MASK_COSTS, MATURITY_LEVELS, YIELD_MODELS,
 } from './calculator.js';
 
@@ -283,6 +283,63 @@ function updateResults() {
   drawWafer(waferDiamMm, dieWidthMm, dieHeightMm, result.yield, edgeLoss, scrLineX, scrLineY);
   drawCurve(processNode, selectedMaturity, yieldModel, critLayers, result.critAreaMm2, result.yield);
   updateShareUrl();
+  updateCompareTable();
+  updateModelComparison(result);
+}
+
+// ── All-models comparison panel ───────────────────────────────
+function updateModelComparison(result) {
+  const models = allModelComparison({
+    d0Effective: result.defectDensityEffective,
+    critAreaMm2: result.critAreaMm2,
+    dpw: result.diesPerWafer,
+    critLayers: parseInt(document.getElementById('critLayers').value) || 25,
+  });
+
+  const activeModel = document.getElementById('yieldModel').value;
+  const maxYield    = models[0].yield;
+  const container   = document.getElementById('modelCompareList');
+  container.innerHTML = '';
+
+  models.forEach(m => {
+    const pct      = (m.yield * 100).toFixed(1);
+    const barWidth = maxYield > 0 ? (m.yield / maxYield * 100) : 0;
+    const isActive = m.key === activeModel;
+    const color    = m.yield >= 0.7 ? 'var(--green)' : m.yield >= 0.4 ? 'var(--yellow)' : 'var(--red)';
+
+    const row = document.createElement('div');
+    row.style.cssText = `display:grid;grid-template-columns:140px 1fr 60px 60px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid rgba(30,45,66,0.5);cursor:pointer;`;
+    if (isActive) row.style.background = 'rgba(0,200,255,0.04)';
+
+    row.innerHTML = `
+      <div style="font-family:var(--font-mono);font-size:0.72rem;color:${isActive ? 'var(--accent)' : 'var(--text-muted)'};font-weight:${isActive ? '600' : '400'};">
+        ${m.label}${isActive ? ' ◀' : ''}
+      </div>
+      <div style="background:var(--surface2);border-radius:3px;height:6px;overflow:hidden;">
+        <div style="width:${barWidth}%;height:100%;background:${color};border-radius:3px;transition:width 0.3s;"></div>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:0.8rem;color:${color};text-align:right;font-weight:600;">${pct}%</div>
+      <div style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);text-align:right;">${m.gdpw}</div>
+    `;
+
+    row.addEventListener('click', () => {
+      document.getElementById('yieldModel').value = m.key;
+      updateResults();
+    });
+
+    container.appendChild(row);
+  });
+
+  // Header row
+  const header = document.createElement('div');
+  header.style.cssText = 'display:grid;grid-template-columns:140px 1fr 60px 60px;gap:8px;margin-bottom:4px;';
+  header.innerHTML = `
+    <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);letter-spacing:0.08em;">MODEL</div>
+    <div></div>
+    <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);text-align:right;">YIELD</div>
+    <div style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-dim);text-align:right;">GDPW</div>
+  `;
+  container.prepend(header);
 }
 
 // ── Critical area toggle ──────────────────────────────────────
@@ -377,6 +434,165 @@ function loadFromUrl() {
     });
   }
 }
+
+// ── Node comparison table ─────────────────────────────────────
+let compareFilter = 'all';
+let compareSort   = 'cost';
+
+function fmtCompact(n) {
+  if (n == null || !isFinite(n)) return '—';
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `$${Math.round(n).toLocaleString()}`;
+  return `$${n.toFixed(2)}`;
+}
+
+function updateCompareTable() {
+  const waferDiamMm  = WAFER_DIAMETERS_MM[waferSelect.value];
+  const dieWidthMm   = parseFloat(document.getElementById('dieWidth').value)  || 10;
+  const dieHeightMm  = parseFloat(document.getElementById('dieHeight').value) || 10;
+  const allCritical  = document.getElementById('allCritical').checked;
+  const critAreaRaw  = parseFloat(document.getElementById('critArea').value);
+  const critAreaMm2  = allCritical ? null : (isNaN(critAreaRaw) ? null : critAreaRaw);
+  const yieldModel   = document.getElementById('yieldModel').value;
+  const critLayers   = parseInt(document.getElementById('critLayers').value) || 25;
+  const waferCount   = parseInt(document.getElementById('waferCount').value) || 100;
+  const edgeLoss     = parseFloat(document.getElementById('edgeLoss').value) || 3;
+  const scrLineX     = parseFloat(document.getElementById('scrLineX').value) || 0;
+  const scrLineY     = parseFloat(document.getElementById('scrLineY').value) || 0;
+  const activeNode   = nodeSelect.value;
+
+  let rows = compareNodes({
+    waferDiamMm, dieWidthMm, dieHeightMm,
+    maturity: selectedMaturity, yieldModel, critLayers, critAreaMm2,
+    waferCount, edgeLossMm: edgeLoss, scrLineX, scrLineY,
+  });
+
+  // Sort
+  if (compareSort === 'yield') {
+    rows = [...rows].sort((a, b) => b.yield - a.yield);
+  } else if (compareSort === 'year') {
+    rows = [...rows].sort((a, b) => PROCESS_NODES[a.nodeKey].year - PROCESS_NODES[b.nodeKey].year);
+  }
+  // 'cost' is already default sort from compareNodes()
+
+  // Find best cost node (lowest totalCostPerDie with valid yield)
+  const bestRow = rows.find(r => r.totalCostPerDie != null && r.yield > 0.01);
+
+  const tbody = document.getElementById('nodeCompareBody');
+  tbody.innerHTML = '';
+
+  rows.forEach(row => {
+    const node    = PROCESS_NODES[row.nodeKey];
+    const isActive = row.nodeKey === activeNode;
+    const isBest   = bestRow && row.nodeKey === bestRow.nodeKey;
+    const vendor   = node.vendor;
+
+    const hidden = (compareFilter === 'industry' && vendor === 'intel') ||
+                   (compareFilter === 'intel'    && vendor !== 'intel');
+
+    const tr = document.createElement('tr');
+    if (isActive) tr.classList.add('active-node');
+    if (hidden)   tr.classList.add('hidden-row');
+
+    const yPct  = (row.yield * 100).toFixed(1) + '%';
+    const yClass = row.yield >= 0.7 ? 'yield-good' : row.yield >= 0.4 ? 'yield-warn' : 'yield-bad';
+
+    tr.innerHTML = `
+      <td>
+        ${node.label.split('(')[0].trim()}
+        ${vendor === 'intel' ? '<span class="node-badge intel">Intel</span>' : ''}
+        ${isBest  ? '<span class="node-badge best">best value</span>' : ''}
+        ${isActive ? '<span class="node-badge active">selected</span>' : ''}
+      </td>
+      <td>${node.year}</td>
+      <td>${row.defectDensityEffective.toFixed(3)}</td>
+      <td>${row.diesPerWafer.toLocaleString()}</td>
+      <td class="${yClass}">${yPct}</td>
+      <td>${row.goodDiesPerWafer.toLocaleString()}</td>
+      <td>${fmtCompact(row.waferCostPerDie)}</td>
+      <td>${fmtCompact(row.maskCostPerDie)}</td>
+      <td class="${isBest ? 'best-cost' : ''}">${fmtCompact(row.totalCostPerDie)}</td>
+    `;
+
+    tr.addEventListener('click', () => {
+      [...nodeSelect.options].forEach(o => { o.selected = o.value === row.nodeKey; });
+      updateResults();
+    });
+
+    tbody.appendChild(tr);
+  });
+}
+
+// Filter + sort buttons
+document.querySelectorAll('.compare-filter').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.compare-filter').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    compareFilter = btn.dataset.filter;
+    updateCompareTable();
+  });
+});
+
+document.querySelectorAll('.compare-sort').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.compare-sort').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    compareSort = btn.dataset.sort;
+    updateCompareTable();
+  });
+});
+
+// ── CSV Export ───────────────────────────────────────────────
+document.getElementById('csvExportBtn').addEventListener('click', () => {
+  const waferDiamMm  = WAFER_DIAMETERS_MM[waferSelect.value];
+  const dieWidthMm   = parseFloat(document.getElementById('dieWidth').value)  || 10;
+  const dieHeightMm  = parseFloat(document.getElementById('dieHeight').value) || 10;
+  const allCritical  = document.getElementById('allCritical').checked;
+  const critAreaRaw  = parseFloat(document.getElementById('critArea').value);
+  const critAreaMm2  = allCritical ? null : (isNaN(critAreaRaw) ? null : critAreaRaw);
+  const yieldModel   = document.getElementById('yieldModel').value;
+  const critLayers   = parseInt(document.getElementById('critLayers').value) || 25;
+  const waferCount   = parseInt(document.getElementById('waferCount').value) || 100;
+  const edgeLoss     = parseFloat(document.getElementById('edgeLoss').value) || 3;
+  const scrLineX     = parseFloat(document.getElementById('scrLineX').value) || 0;
+  const scrLineY     = parseFloat(document.getElementById('scrLineY').value) || 0;
+
+  const rows = compareNodes({
+    waferDiamMm, dieWidthMm, dieHeightMm,
+    maturity: selectedMaturity, yieldModel, critLayers, critAreaMm2,
+    waferCount, edgeLossMm: edgeLoss, scrLineX, scrLineY,
+  });
+
+  const headers = ['Node','Year','Vendor','D0_base','D0_effective','DPW','Yield_pct','GDPW','Wafer_cost_per_die','Mask_cost_per_die','Total_cost_per_die','Wafer_cost','Mask_cost'];
+  const csvRows = [headers.join(',')];
+
+  rows.forEach(r => {
+    const node = PROCESS_NODES[r.nodeKey];
+    csvRows.push([
+      `"${node.label}"`,
+      node.year,
+      node.vendor,
+      r.defectDensityBase,
+      r.defectDensityEffective.toFixed(4),
+      r.diesPerWafer,
+      (r.yield * 100).toFixed(2),
+      r.goodDiesPerWafer,
+      r.waferCostPerDie != null ? r.waferCostPerDie.toFixed(4) : '',
+      r.maskCostPerDie  != null ? r.maskCostPerDie.toFixed(4)  : '',
+      r.totalCostPerDie != null ? r.totalCostPerDie.toFixed(4) : '',
+      r.waferCost,
+      r.maskCost,
+    ].join(','));
+  });
+
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `yielddesk_${dieWidthMm}x${dieHeightMm}mm_${selectedMaturity}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
 
 // ── Redraw curve on resize ────────────────────────────────────
 const ro = new ResizeObserver(() => updateResults());

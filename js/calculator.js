@@ -230,6 +230,41 @@ export function calculate({
 }
 
 /**
+ * All yield models for current params — returns array of { key, label, formula, yield, gdpw }
+ * sorted by yield descending. Useful for showing the model uncertainty band.
+ */
+export function allModelComparison({ d0Effective, critAreaMm2, dpw, critLayers = 25 }) {
+  const lambda = d0Effective * (critAreaMm2 / 100);
+  return Object.entries(YIELD_MODELS).map(([key, m]) => {
+    const y = Math.min(1, Math.max(0, m.fn(lambda, critLayers)));
+    return { key, label: m.label, formula: m.formula, yield: y, gdpw: Math.floor(dpw * y) };
+  }).sort((a, b) => b.yield - a.yield);
+}
+
+/**
+ * Compare all process nodes for a given die configuration.
+ * Returns array sorted by totalCostPerDie ascending (nulls last).
+ * Always uses default wafer/mask costs so nodes are comparable.
+ */
+export function compareNodes({ waferDiamMm, dieWidthMm, dieHeightMm, maturity = 'hvm', yieldModel = 'murphy', critLayers = 25, critAreaMm2 = null, waferCount = 100, edgeLossMm = 3, scrLineX = 0.1, scrLineY = 0.1 }) {
+  const rows = Object.entries(PROCESS_NODES).map(([nodeKey, node]) => {
+    const result = calculate({
+      waferDiamMm, dieWidthMm, dieHeightMm,
+      processNode: nodeKey, maturity, yieldModel, critLayers, critAreaMm2,
+      waferCount, edgeLossMm, scrLineX, scrLineY,
+    });
+    return { nodeKey, ...result };
+  });
+
+  return rows.sort((a, b) => {
+    if (a.totalCostPerDie == null && b.totalCostPerDie == null) return 0;
+    if (a.totalCostPerDie == null) return 1;
+    if (b.totalCostPerDie == null) return -1;
+    return a.totalCostPerDie - b.totalCostPerDie;
+  });
+}
+
+/**
  * Sensitivity curve: yield vs die area at fixed node/maturity/model.
  * Returns array of {areaMm2, yield} points.
  */
